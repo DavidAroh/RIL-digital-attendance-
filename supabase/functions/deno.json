@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.ns", "deno.window", "dom", "esnext"],
+    "strict": false
+  },
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
+    "npm:@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2"
+  }
+}
