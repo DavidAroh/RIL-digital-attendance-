@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Search, User, Shield, Briefcase, CheckCircle2 } from 'lucide-react';
+import { Search, User, Shield, Briefcase, CheckCircle2, Calendar } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -9,6 +9,7 @@ import {
 import { Input } from '../ui/input';
 import { Select } from '../ui/select';
 import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
 import { Avatar, AvatarFallback } from '../ui/avatar';
 import {
   Table,
@@ -22,7 +23,11 @@ import type { Database } from '../../lib/database.types';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 
-export function UserManagement() {
+interface UserManagementProps {
+  onViewUserCalendar?: (userId: string) => void;
+}
+
+export function UserManagement({ onViewUserCalendar }: UserManagementProps) {
   const [users, setUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -132,7 +137,8 @@ export function UserManagement() {
                 <TableHead>Role</TableHead>
                 <TableHead>Department</TableHead>
                 <TableHead>Signature</TableHead>
-                <TableHead className="text-right">Date Joined</TableHead>
+                <TableHead>Date Joined</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -192,8 +198,22 @@ export function UserManagement() {
                       <span className="text-muted-foreground text-xs">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground font-mono">
+                  <TableCell className="text-xs text-muted-foreground font-mono">
                     {new Date(user.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {onViewUserCalendar && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onViewUserCalendar(user.id)}
+                        className="h-7 text-xs gap-1"
+                        title="View monthly attendance calendar"
+                      >
+                        <Calendar className="w-3.5 h-3.5 text-primary" />
+                        Calendar
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

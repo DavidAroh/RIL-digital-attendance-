@@ -117,7 +117,7 @@ export function ShiftManagement() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8 text-xs h-9"
-              placeholder="Search by shift code, title, department, or manager name..."
+              placeholder="Search by days, title, department, or manager name..."
             />
           </div>
         </CardHeader>

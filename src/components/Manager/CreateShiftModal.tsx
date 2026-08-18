@@ -44,7 +44,7 @@ export function CreateShiftModal({
     try {
       const { error: upsertError } = await supabase.from('courses').upsert(
         {
-          code: formData.code.trim().toUpperCase(),
+          code: formData.code.trim(),
           title: formData.title.trim(),
           department: formData.department.trim(),
           level: formData.shift_type.trim(),
@@ -60,7 +60,7 @@ export function CreateShiftModal({
       const msg = String((err as { message?: string })?.message || err);
       if (/duplicate|conflict|409/i.test(msg)) {
         setError(
-          'Shift code already exists for your account. Please use a unique code.'
+          'A shift with these days already exists for your account. Please use a unique title or schedule.'
         );
       } else {
         setError(
@@ -91,7 +91,7 @@ export function CreateShiftModal({
           )}
 
           <div className="space-y-1.5">
-            <Label htmlFor="shift-code">Shift / Group Code</Label>
+            <Label htmlFor="shift-code">Days</Label>
             <Input
               id="shift-code"
               type="text"
@@ -99,8 +99,7 @@ export function CreateShiftModal({
               onChange={(e) =>
                 setFormData({ ...formData, code: e.target.value })
               }
-              className="uppercase font-mono"
-              placeholder="e.g., ENG-MORN-01"
+              placeholder="e.g., Mon - Fri, Mon - Sat, Monday - Friday"
               required
             />
           </div>

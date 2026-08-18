@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { Plus, LogOut, Briefcase } from 'lucide-react';
+import { Plus, LogOut, Briefcase, Calendar, LayoutGrid } from 'lucide-react';
 import { ShiftList } from './ShiftList';
 import { CreateShiftModal } from './CreateShiftModal';
 import { SessionManager } from './SessionManager';
+import { AttendanceCalendar } from '../Calendar/AttendanceCalendar';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Avatar, AvatarFallback } from '../ui/avatar';
+import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import type { Database } from '../../lib/database.types';
 
 type Shift = Database['public']['Tables']['courses']['Row'];
@@ -18,6 +20,7 @@ export function ManagerDashboard() {
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'shifts' | 'calendar'>('shifts');
 
   const fetchShifts = useCallback(async () => {
     if (!profile) return;
@@ -119,33 +122,60 @@ export function ManagerDashboard() {
         </div>
       </header>
 
+      {/* Tabs Navigation */}
+      <div className="bg-background border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+          <Tabs
+            value={view}
+            onValueChange={(val) => setView(val as 'shifts' | 'calendar')}
+          >
+            <TabsList className="bg-muted/60">
+              <TabsTrigger value="shifts" className="gap-2 text-xs">
+                <LayoutGrid className="w-3.5 h-3.5" />
+                Managed Shifts & Kiosks
+              </TabsTrigger>
+              <TabsTrigger value="calendar" className="gap-2 text-xs">
+                <Calendar className="w-3.5 h-3.5" />
+                Staff Attendance Calendar
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </div>
+
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">
-              Managed Shifts & Work Groups ({shifts.length})
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              Select a shift to launch a live check-in kiosk or view attendance records
-            </p>
-          </div>
-          <Button
-            size="sm"
-            onClick={() => setShowCreateModal(true)}
-            className="sm:hidden h-8 gap-1.5 text-xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Create Shift / Group
-          </Button>
-        </div>
+        {view === 'shifts' ? (
+          <>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                  Managed Shifts & Work Groups ({shifts.length})
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Select a shift to launch a live check-in kiosk or view attendance records
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => setShowCreateModal(true)}
+                className="sm:hidden h-8 gap-1.5 text-xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Create Shift / Group
+              </Button>
+            </div>
 
-        {loading ? (
-          <div className="text-center py-16">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
-          </div>
+            {loading ? (
+              <div className="text-center py-16">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
+              </div>
+            ) : (
+              <ShiftList shifts={shifts} onSelectShift={setSelectedShift} />
+            )}
+          </>
         ) : (
-          <ShiftList shifts={shifts} onSelectShift={setSelectedShift} />
+          <AttendanceCalendar managerId={profile?.id} />
         )}
       </main>
 

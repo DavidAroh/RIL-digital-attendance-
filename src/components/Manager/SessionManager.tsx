@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { ArrowLeft, Plus, Building2 } from 'lucide-react';
+import { ArrowLeft, Plus, Building2, Calendar, Radio } from 'lucide-react';
 import { CreateSessionModal } from './CreateSessionModal';
 import { ActiveSessionView } from './ActiveSessionView';
 import { SessionHistory } from './SessionHistory';
+import { AttendanceCalendar } from '../Calendar/AttendanceCalendar';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import {
   Card,
   CardContent,
@@ -24,6 +26,7 @@ interface SessionManagerProps {
 }
 
 export function SessionManager({ shift, onBack }: SessionManagerProps) {
+  const [tab, setTab] = useState<'kiosk' | 'calendar'>('kiosk');
   const [activeSession, setActiveSession] =
     useState<AttendanceSession | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -72,29 +75,51 @@ export function SessionManager({ shift, onBack }: SessionManagerProps) {
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to Shifts & Work Groups
           </Button>
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-foreground flex-shrink-0">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <Badge variant="subtle" className="font-mono text-[10px]">
-                  {shift.code}
-                </Badge>
-                <h1 className="text-lg font-bold text-foreground">
-                  {shift.title}
-                </h1>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center text-foreground flex-shrink-0">
+                <Building2 className="w-5 h-5" />
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {shift.department} &bull; {shift.level} &bull; {shift.semester}
-              </p>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="subtle" className="font-mono text-[10px]">
+                    {shift.code}
+                  </Badge>
+                  <h1 className="text-lg font-bold text-foreground">
+                    {shift.title}
+                  </h1>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {shift.department} &bull; {shift.level} &bull; {shift.semester}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Tabs
+                value={tab}
+                onValueChange={(val) => setTab(val as 'kiosk' | 'calendar')}
+              >
+                <TabsList className="bg-muted/60">
+                  <TabsTrigger value="kiosk" className="gap-1.5 text-xs">
+                    <Radio className="w-3.5 h-3.5" />
+                    Kiosk & Sessions
+                  </TabsTrigger>
+                  <TabsTrigger value="calendar" className="gap-1.5 text-xs">
+                    <Calendar className="w-3.5 h-3.5" />
+                    Attendance Calendar
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {loading ? (
+        {tab === 'calendar' ? (
+          <AttendanceCalendar initialShiftId={shift.id} />
+        ) : loading ? (
           <div className="text-center py-16">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
           </div>

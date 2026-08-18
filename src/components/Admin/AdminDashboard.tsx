@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { Shield, Users, Building2, BarChart3, LogOut } from 'lucide-react';
+import { Shield, Users, Building2, BarChart3, Calendar, LogOut } from 'lucide-react';
 import { UserManagement } from './UserManagement';
 import { ShiftManagement } from './ShiftManagement';
 import { Analytics } from './Analytics';
+import { AttendanceCalendar } from '../Calendar/AttendanceCalendar';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Avatar, AvatarFallback } from '../ui/avatar';
@@ -11,7 +12,8 @@ import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 
 export function AdminDashboard() {
   const { profile, signOut } = useAuth();
-  const [view, setView] = useState<'users' | 'shifts' | 'analytics'>('users');
+  const [view, setView] = useState<'users' | 'shifts' | 'calendar' | 'analytics'>('users');
+  const [calendarUserId, setCalendarUserId] = useState<string>('');
 
   const handleSignOut = async () => {
     try {
@@ -19,6 +21,11 @@ export function AdminDashboard() {
     } catch (error) {
       console.error('Error signing out:', error);
     }
+  };
+
+  const handleViewUserCalendar = (userId: string) => {
+    setCalendarUserId(userId);
+    setView('calendar');
   };
 
   return (
@@ -66,7 +73,12 @@ export function AdminDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
           <Tabs
             value={view}
-            onValueChange={(val) => setView(val as 'users' | 'shifts' | 'analytics')}
+            onValueChange={(val) => {
+              setView(val as 'users' | 'shifts' | 'calendar' | 'analytics');
+              if (val !== 'calendar') {
+                setCalendarUserId('');
+              }
+            }}
           >
             <TabsList className="bg-muted/60">
               <TabsTrigger value="users" className="gap-2 text-xs">
@@ -76,6 +88,10 @@ export function AdminDashboard() {
               <TabsTrigger value="shifts" className="gap-2 text-xs">
                 <Building2 className="w-3.5 h-3.5" />
                 Shifts & Work Groups
+              </TabsTrigger>
+              <TabsTrigger value="calendar" className="gap-2 text-xs">
+                <Calendar className="w-3.5 h-3.5" />
+                Attendance Calendar
               </TabsTrigger>
               <TabsTrigger value="analytics" className="gap-2 text-xs">
                 <BarChart3 className="w-3.5 h-3.5" />
@@ -88,8 +104,13 @@ export function AdminDashboard() {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {view === 'users' && <UserManagement />}
+        {view === 'users' && (
+          <UserManagement onViewUserCalendar={handleViewUserCalendar} />
+        )}
         {view === 'shifts' && <ShiftManagement />}
+        {view === 'calendar' && (
+          <AttendanceCalendar initialUserId={calendarUserId} />
+        )}
         {view === 'analytics' && <Analytics />}
       </main>
     </div>
