@@ -59,9 +59,9 @@ interface AttendanceCalendarProps {
 interface DayAttendanceDetail {
   date: Date;
   dateKey: string; // YYYY-MM-DD
-  isCurrentMonth: boolean;
   isToday: boolean;
   isFuture: boolean;
+  isWeekend: boolean;
   hasSessions: boolean;
   // For individual staff view
   status?: 'signed' | 'missed' | 'none';
@@ -85,13 +85,90 @@ interface DayAttendanceDetail {
   }>;
 }
 
+// Format a date as YYYY-MM-DD using local time (not UTC) so day buckets
+// line up with what the manager sees on screen.
+function formatDateKey(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Sunday 00:00 of the week containing `d`
+function startOfWeek(d: Date) {
+  const s = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  s.setDate(s.getDate() - s.getDay());
+  return s;
+}
+
+const monthNames = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const formatTime = (value: string) =>
+  new Date(value).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+// Lines shown in the hover tooltip of a day cell — one per session, with times
+function buildDayTimeLines(
+  day: DayAttendanceDetail,
+  viewMode: 'employee' | 'shift'
+): Array<{ label: string; time: string; tone: 'signed' | 'missed' | 'muted' }> {
+  if (viewMode === 'employee') {
+    const lines = [
+      ...day.signedSessions.map((s) => ({
+        label: s.shift?.code
+          ? `${s.shift.code} · ${s.session.session_name}`
+          : s.session.session_name,
+        time: `Clocked in ${formatTime(s.record.checked_in_at)}`,
+        tone: 'signed' as const,
+      })),
+      ...day.missedSessions.map((m) => ({
+        label: m.shift?.code
+          ? `${m.shift.code} · ${m.session.session_name}`
+          : m.session.session_name,
+        time: `Session ${formatTime(m.session.started_at)} · no clock-in`,
+        tone: 'missed' as const,
+      })),
+    ];
+    return lines.length > 0
+      ? lines
+      : [{ label: 'No sessions scheduled', time: '—', tone: 'muted' as const }];
+  }
+
+  return day.shiftSessions.length > 0
+    ? day.shiftSessions.map((s) => ({
+        label: s.session_name,
+        time: `Opened ${formatTime(s.started_at)}${
+          s.ended_at ? ` · closed ${formatTime(s.ended_at)}` : ''
+        }`,
+        tone: 'muted' as const,
+      }))
+    : [{ label: 'No kiosk sessions', time: '—', tone: 'muted' as const }];
+}
+
 export function AttendanceCalendar({
   managerId,
   initialShiftId,
   initialUserId,
   onBack,
 }: AttendanceCalendarProps) {
-  // Calendar Navigation
+  // Calendar Navigation — any date inside the week being displayed
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [viewMode, setViewMode] = useState<'employee' | 'shift'>('employee');
 
@@ -107,7 +184,7 @@ export function AttendanceCalendar({
   const [searchEmployeeQuery, setSearchEmployeeQuery] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
 
-  // Raw Database Data for Selected Month
+  // Raw Database Data for the Selected Week
   const [sessions, setSessions] = useState<AttendanceSession[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [registrations, setRegistrations] = useState<
@@ -121,26 +198,38 @@ export function AttendanceCalendar({
   const [isDayDialogOpen, setIsDayDialogOpen] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
 
-  // Month & Year calculations
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  // Week boundaries for the visible week
+  const weekStart = useMemo(() => startOfWeek(currentDate), [currentDate]);
+  const weekStartKey = formatDateKey(weekStart);
+  const weekEnd = useMemo(() => {
+    const e = new Date(weekStart);
+    e.setDate(e.getDate() + 6);
+    e.setHours(23, 59, 59, 999);
+    return e;
+  }, [weekStart]);
 
-  const monthNames = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
+  // "Aug 17 – Aug 23, 2026" (drops the repeated month when both ends match)
+  const weekRangeLabel = useMemo(() => {
+    const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
+    const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
+    const startLabel = `${monthNames[weekStart.getMonth()].slice(0, 3)} ${weekStart.getDate()}`;
+    const endLabel = sameMonth
+      ? `${weekEnd.getDate()}`
+      : `${monthNames[weekEnd.getMonth()].slice(0, 3)} ${weekEnd.getDate()}`;
+    const yearLabel = sameYear
+      ? weekEnd.getFullYear()
+      : `${weekStart.getFullYear()} – ${weekEnd.getFullYear()}`;
+    return `${startLabel} – ${endLabel}, ${yearLabel}`;
+  }, [weekStart, weekEnd]);
 
-  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // ISO-ish week number, used purely as a label
+  const weekNumber = useMemo(() => {
+    const firstOfYear = new Date(weekStart.getFullYear(), 0, 1);
+    const diffDays = Math.floor(
+      (weekStart.getTime() - startOfWeek(firstOfYear).getTime()) / 86400000
+    );
+    return Math.floor(diffDays / 7) + 1;
+  }, [weekStart]);
 
   // 1. Initial Load: Fetch Shifts and Staff Profiles
   useEffect(() => {
@@ -213,15 +302,13 @@ export function AttendanceCalendar({
     loadMeta();
   }, [managerId, initialShiftId, initialUserId]);
 
-  // 2. Fetch Sessions, Records, and Registrations for the current month view
-  const fetchMonthData = useCallback(async () => {
+  // 2. Fetch Sessions, Records, and Registrations for the visible week
+  const fetchWeekData = useCallback(async () => {
     setLoading(true);
 
-    // Calculate month boundary
-    const startDate = new Date(year, month - 1, 20); // buffer past month days
-    const endDate = new Date(year, month + 2, 10); // buffer next month days
-    const startIso = startDate.toISOString();
-    const endIso = endDate.toISOString();
+    // Query the exact week window (local midnight to local end-of-week)
+    const startIso = weekStart.toISOString();
+    const endIso = weekEnd.toISOString();
 
     try {
       // 1. Fetch Sessions
@@ -264,15 +351,15 @@ export function AttendanceCalendar({
         setRecords([]);
       }
     } catch (e) {
-      console.error('Error fetching month data:', e);
+      console.error('Error fetching week data:', e);
     } finally {
       setLoading(false);
     }
-  }, [year, month, managerId, shifts, selectedShiftId]);
+  }, [weekStart, weekEnd, managerId, shifts, selectedShiftId]);
 
   useEffect(() => {
-    fetchMonthData();
-  }, [fetchMonthData]);
+    fetchWeekData();
+  }, [fetchWeekData]);
 
   // Unique departments for filtering
   const departments = useMemo(() => {
@@ -324,82 +411,21 @@ export function AttendanceCalendar({
     return map;
   }, [employees]);
 
-  // Compute Calendar Grid Days
+  // Compute the 7 days of the visible week
   const calendarDays = useMemo(() => {
-    const firstDayOfMonth = new Date(year, month, 1);
-    const startingDayOfWeek = firstDayOfMonth.getDay(); // 0 for Sunday
-    const lastDateOfMonth = new Date(year, month + 1, 0).getDate();
-    const lastDateOfPrevMonth = new Date(year, month, 0).getDate();
-
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = formatDateKey(new Date());
     const now = new Date();
 
     const days: DayAttendanceDetail[] = [];
 
-    // Helper: format YYYY-MM-DD in local time
-    const formatDateKey = (d: Date) => {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    };
-
-    // 1. Previous Month Leading Days
-    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
-      const d = new Date(year, month - 1, lastDateOfPrevMonth - i);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
       const dateKey = formatDateKey(d);
       days.push(
         buildDayDetail(
           d,
           dateKey,
-          false,
-          dateKey === todayStr,
-          d > now,
-          sessions,
-          records,
-          registrations,
-          viewMode,
-          selectedUserId,
-          selectedShiftId,
-          shiftMap,
-          profileMap
-        )
-      );
-    }
-
-    // 2. Current Month Days
-    for (let day = 1; day <= lastDateOfMonth; day++) {
-      const d = new Date(year, month, day);
-      const dateKey = formatDateKey(d);
-      days.push(
-        buildDayDetail(
-          d,
-          dateKey,
-          true,
-          dateKey === todayStr,
-          d > now,
-          sessions,
-          records,
-          registrations,
-          viewMode,
-          selectedUserId,
-          selectedShiftId,
-          shiftMap,
-          profileMap
-        )
-      );
-    }
-
-    // 3. Next Month Trailing Days (fill 35 or 42 grid slots)
-    const remainingSlots = (7 - (days.length % 7)) % 7;
-    for (let day = 1; day <= remainingSlots; day++) {
-      const d = new Date(year, month + 1, day);
-      const dateKey = formatDateKey(d);
-      days.push(
-        buildDayDetail(
-          d,
-          dateKey,
-          false,
           dateKey === todayStr,
           d > now,
           sessions,
@@ -416,8 +442,7 @@ export function AttendanceCalendar({
 
     return days;
   }, [
-    year,
-    month,
+    weekStart,
     sessions,
     records,
     registrations,
@@ -428,26 +453,24 @@ export function AttendanceCalendar({
     profileMap,
   ]);
 
-  // Statistics for current month
-  const monthlyStats = useMemo(() => {
-    const currentMonthDays = calendarDays.filter((d) => d.isCurrentMonth);
+  // Statistics for the visible week
+  const weeklyStats = useMemo(() => {
+    const currentWeekDays = calendarDays;
 
     if (viewMode === 'employee') {
       let totalSessionDays = 0;
       let signedDays = 0;
       let missedDays = 0;
       let qrCount = 0;
-      let pinCount = 0;
       let offlineQrCount = 0;
 
-      currentMonthDays.forEach((day) => {
+      currentWeekDays.forEach((day) => {
         if (day.hasSessions) {
           totalSessionDays++;
           if (day.status === 'signed') {
             signedDays++;
             day.signedSessions.forEach((s) => {
               if (s.record.check_in_method === 'qr') qrCount++;
-              else if (s.record.check_in_method === 'pin') pinCount++;
               else if (s.record.check_in_method === 'offline_qr')
                 offlineQrCount++;
             });
@@ -468,7 +491,6 @@ export function AttendanceCalendar({
         missedDays,
         rate,
         qrCount,
-        pinCount,
         offlineQrCount,
       };
     } else {
@@ -477,7 +499,7 @@ export function AttendanceCalendar({
       let totalExpectedAttendance = 0;
       let totalActualAttendance = 0;
 
-      currentMonthDays.forEach((day) => {
+      currentWeekDays.forEach((day) => {
         if (day.shiftSessions.length > 0) {
           totalShiftSessions += day.shiftSessions.length;
           totalExpectedAttendance += day.totalEnrolledCount;
@@ -499,25 +521,27 @@ export function AttendanceCalendar({
     }
   }, [calendarDays, viewMode]);
 
-  // Month navigation handlers
-  const handlePrevMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
+  // Week navigation handlers
+  const shiftWeeks = (offset: number) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + offset * 7);
+    setCurrentDate(d);
   };
 
-  const handleNextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
-  };
+  const handlePrevWeek = () => shiftWeeks(-1);
+
+  const handleNextWeek = () => shiftWeeks(1);
 
   const handleJumpToToday = () => {
     setCurrentDate(new Date());
   };
 
-  const handleMonthSelect = (mIndex: number) => {
-    setCurrentDate(new Date(year, mIndex, 1));
-  };
-
-  const handleYearSelect = (yVal: number) => {
-    setCurrentDate(new Date(yVal, month, 1));
+  // Jump to the week containing an arbitrary date (YYYY-MM-DD from the picker)
+  const handleDateJump = (value: string) => {
+    if (!value) return;
+    const [y, m, d] = value.split('-').map(Number);
+    if (!y || !m || !d) return;
+    setCurrentDate(new Date(y, m - 1, d));
   };
 
   // Day Click Dialog
@@ -543,9 +567,9 @@ export function AttendanceCalendar({
             selectedProfile.employee_id || selectedProfile.matric_number || 'N/A'
           }`,
         ]);
-        sheet.addRow([`Month: ${monthNames[month]} ${year}`]);
+        sheet.addRow([`Week: ${weekRangeLabel} (Week ${weekNumber})`]);
         sheet.addRow([
-          `Attendance Rate: ${monthlyStats.rate}% (${monthlyStats.signedDays}/${monthlyStats.totalSessionDays} days signed)`,
+          `Attendance Rate: ${weeklyStats.rate}% (${weeklyStats.signedDays}/${weeklyStats.totalSessionDays} days signed)`,
         ]);
         sheet.addRow([]);
 
@@ -567,8 +591,8 @@ export function AttendanceCalendar({
           fgColor: { argb: 'FF18181B' },
         };
 
-        const currentMonthDays = calendarDays.filter((d) => d.isCurrentMonth);
-        currentMonthDays.forEach((d) => {
+        const currentWeekDays = calendarDays;
+        currentWeekDays.forEach((d) => {
           if (!d.hasSessions) {
             sheet.addRow([
               d.dateKey,
@@ -613,15 +637,15 @@ export function AttendanceCalendar({
             selectedShift ? `${selectedShift.code} - ${selectedShift.title}` : 'All Shifts'
           }`,
         ]);
-        sheet.addRow([`Month: ${monthNames[month]} ${year}`]);
+        sheet.addRow([`Week: ${weekRangeLabel} (Week ${weekNumber})`]);
         sheet.addRow([
-          `Overall Attendance: ${monthlyStats.rate}% (${
-            'totalActualAttendance' in monthlyStats
-              ? monthlyStats.totalActualAttendance
+          `Overall Attendance: ${weeklyStats.rate}% (${
+            'totalActualAttendance' in weeklyStats
+              ? weeklyStats.totalActualAttendance
               : 0
           }/${
-            'totalExpectedAttendance' in monthlyStats
-              ? monthlyStats.totalExpectedAttendance
+            'totalExpectedAttendance' in weeklyStats
+              ? weeklyStats.totalExpectedAttendance
               : 0
           })`,
         ]);
@@ -644,8 +668,8 @@ export function AttendanceCalendar({
           fgColor: { argb: 'FF18181B' },
         };
 
-        const currentMonthDays = calendarDays.filter((d) => d.isCurrentMonth);
-        currentMonthDays.forEach((d) => {
+        const currentWeekDays = calendarDays;
+        currentWeekDays.forEach((d) => {
           if (d.shiftSessions.length === 0) {
             sheet.addRow([
               d.dateKey,
@@ -684,7 +708,7 @@ export function AttendanceCalendar({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Attendance_Calendar_${monthNames[month]}_${year}.xlsx`;
+      a.download = `Attendance_Week_${weekStartKey}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -705,7 +729,7 @@ export function AttendanceCalendar({
       doc.rect(0, 0, doc.internal.pageSize.getWidth(), 55, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
-      doc.text('STAFF ATTENDANCE CALENDAR REPORT', 40, 34);
+      doc.text('STAFF WEEKLY ATTENDANCE REPORT', 40, 34);
 
       doc.setTextColor(50, 50, 50);
       doc.setFontSize(10);
@@ -722,10 +746,10 @@ export function AttendanceCalendar({
         );
         top += 16;
         doc.text(`Department: ${selectedProfile.department || 'General'}`, 40, top);
-        doc.text(`Month & Year: ${monthNames[month]} ${year}`, 300, top);
+        doc.text(`Week: ${weekRangeLabel} (Week ${weekNumber})`, 300, top);
         top += 16;
         doc.text(
-          `Monthly Compliance: ${monthlyStats.rate}% (${monthlyStats.signedDays} Signed, ${monthlyStats.missedDays} Missed)`,
+          `Weekly Compliance: ${weeklyStats.rate}% (${weeklyStats.signedDays} Signed, ${weeklyStats.missedDays} Missed)`,
           40,
           top
         );
@@ -748,8 +772,8 @@ export function AttendanceCalendar({
         doc.text('Clock-In Time', 420, top);
 
         top += 20;
-        const currentMonthDays = calendarDays.filter((d) => d.isCurrentMonth);
-        currentMonthDays.forEach((d) => {
+        const currentWeekDays = calendarDays;
+        currentWeekDays.forEach((d) => {
           if (top > doc.internal.pageSize.getHeight() - 50) {
             doc.addPage();
             top = 40;
@@ -791,7 +815,7 @@ export function AttendanceCalendar({
         });
       }
 
-      doc.save(`Attendance_Calendar_${monthNames[month]}_${year}.pdf`);
+      doc.save(`Attendance_Week_${weekStartKey}.pdf`);
     } catch (e) {
       console.error('Error generating PDF:', e);
     } finally {
@@ -824,7 +848,7 @@ export function AttendanceCalendar({
                 Staff Attendance Calendar
               </h2>
               <Badge variant="subtle" className="text-[10px] uppercase font-mono">
-                Compliance View
+                Weekly View
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -1022,19 +1046,19 @@ export function AttendanceCalendar({
                 </div>
               </div>
 
-              {/* Quick Monthly Metric Badges */}
+              {/* Quick Weekly Metric Badges */}
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  {monthlyStats.signedDays} Signed Days
+                  {weeklyStats.signedDays} Signed Days
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-50 text-rose-800 border border-rose-200 font-medium">
                   <XCircle className="w-3.5 h-3.5 text-rose-600" />
-                  {monthlyStats.missedDays} Missed Days
+                  {weeklyStats.missedDays} Missed Days
                 </span>
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-foreground font-semibold">
                   <Sparkles className="w-3.5 h-3.5 text-primary" />
-                  {monthlyStats.rate}% Compliance
+                  {weeklyStats.rate}% Compliance
                 </span>
               </div>
             </div>
@@ -1052,62 +1076,58 @@ export function AttendanceCalendar({
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={handlePrevMonth}
+                  onClick={handlePrevWeek}
                   className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                  title="Previous Month"
+                  title="Previous Week"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={handleNextMonth}
+                  onClick={handleNextWeek}
                   className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                  title="Next Month"
+                  title="Next Week"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
 
               <div className="flex items-center space-x-2">
-                <h3 className="text-lg font-bold text-foreground tracking-tight">
-                  {monthNames[month]} {year}
-                </h3>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground tracking-tight leading-tight">
+                    {weekRangeLabel}
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground font-mono">
+                    Week {weekNumber} &bull; Sun – Sat
+                  </p>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleJumpToToday}
                   className="h-7 text-xs px-2 text-muted-foreground"
                 >
-                  Today
+                  This Week
                 </Button>
               </div>
             </div>
 
-            {/* Quick Month & Year jump selects */}
-            <div className="flex items-center space-x-2">
-              <select
-                value={month}
-                onChange={(e) => handleMonthSelect(Number(e.target.value))}
-                className="text-xs bg-background border rounded-md px-2 py-1 text-foreground"
+            {/* Jump to the week containing a specific date */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="week-jump"
+                className="text-xs text-muted-foreground whitespace-nowrap"
               >
-                {monthNames.map((name, idx) => (
-                  <option key={name} value={idx}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={year}
-                onChange={(e) => handleYearSelect(Number(e.target.value))}
+                Jump to date
+              </label>
+              <input
+                id="week-jump"
+                type="date"
+                value={weekStartKey}
+                onChange={(e) => handleDateJump(e.target.value)}
                 className="text-xs bg-background border rounded-md px-2 py-1 text-foreground"
-              >
-                {[year - 2, year - 1, year, year + 1, year + 2].map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
         </CardHeader>
@@ -1122,8 +1142,8 @@ export function AttendanceCalendar({
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Day-of-week Headers */}
-              <div className="grid grid-cols-7 gap-1.5 sm:gap-2 text-center text-xs font-semibold text-muted-foreground pb-2">
+              {/* Day-of-week Headers (hidden on mobile, where days stack) */}
+              <div className="hidden sm:grid grid-cols-7 gap-1.5 sm:gap-2 text-center text-xs font-semibold text-muted-foreground pb-2">
                 {daysOfWeek.map((day, idx) => (
                   <div
                     key={day}
@@ -1136,39 +1156,78 @@ export function AttendanceCalendar({
                 ))}
               </div>
 
-              {/* 7-column Calendar Grid */}
-              <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5">
+              {/* Weekly Grid — 7 days, stacked on mobile */}
+              <div className="grid grid-cols-1 sm:grid-cols-7 gap-2 sm:gap-2.5">
                 {calendarDays.map((day, index) => {
                   const dayNum = day.date.getDate();
+                  const timeLines = buildDayTimeLines(day, viewMode);
 
                   return (
                     <div
                       key={`${day.dateKey}-${index}`}
                       onClick={() => handleDayClick(day)}
-                      className={`min-h-[86px] sm:min-h-[105px] p-2 rounded-xl border transition-all duration-200 cursor-pointer flex flex-col justify-between relative group ${
-                        !day.isCurrentMonth
-                          ? 'bg-muted/15 opacity-40 border-dashed border-muted'
-                          : day.isToday
+                      className={`min-h-[92px] sm:min-h-[160px] p-2 rounded-xl border transition-all duration-200 cursor-pointer flex flex-col justify-between relative group ${
+                        day.isToday
                           ? 'bg-primary/5 border-primary/50 shadow-xs ring-1 ring-primary/20'
+                          : day.isFuture
+                          ? 'bg-muted/10 border-dashed hover:bg-muted/20'
+                          : day.isWeekend
+                          ? 'bg-muted/20 hover:bg-muted/30 hover:border-foreground/20'
                           : 'bg-card hover:bg-muted/30 hover:border-foreground/20 hover:shadow-xs'
                       }`}
                     >
+                      {/* Hover tooltip — clock-in / session times for this day */}
+                      <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 hidden w-max max-w-[230px] -translate-x-1/2 group-hover:block">
+                        <div className="rounded-lg border bg-popover text-popover-foreground shadow-md px-2.5 py-2 space-y-1.5">
+                          <p className="text-[10px] font-bold uppercase tracking-wide">
+                            {day.date.toLocaleDateString(undefined, {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                            })}
+                          </p>
+                          {timeLines.map((line, i) => (
+                            <div key={i} className="space-y-0.5">
+                              <p className="text-[10px] font-medium leading-tight truncate">
+                                {line.label}
+                              </p>
+                              <p
+                                className={`text-[10px] font-mono flex items-center gap-1 ${
+                                  line.tone === 'signed'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : line.tone === 'missed'
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : 'text-muted-foreground'
+                                }`}
+                              >
+                                <Clock className="w-2.5 h-2.5 flex-shrink-0" />
+                                {line.time}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                       {/* Top Date Header */}
                       <div className="flex justify-between items-start">
-                        <span
-                          className={`text-xs font-bold leading-none ${
-                            day.isToday
-                              ? 'w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center'
-                              : !day.isCurrentMonth
-                              ? 'text-muted-foreground'
-                              : 'text-foreground'
-                          }`}
-                        >
-                          {dayNum}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-xs font-bold leading-none ${
+                              day.isToday
+                                ? 'w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center'
+                                : day.isFuture
+                                ? 'text-muted-foreground'
+                                : 'text-foreground'
+                            }`}
+                          >
+                            {dayNum}
+                          </span>
+                          <span className="text-[10px] font-semibold uppercase text-muted-foreground sm:hidden">
+                            {daysOfWeek[day.date.getDay()]}
+                          </span>
+                        </div>
 
                         {day.isToday && (
-                          <span className="hidden sm:inline-block text-[9px] font-mono text-primary font-bold uppercase">
+                          <span className="text-[9px] font-mono text-primary font-bold uppercase">
                             Today
                           </span>
                         )}
@@ -1233,16 +1292,39 @@ export function AttendanceCalendar({
                         )}
                       </div>
 
-                      {/* Bottom Footer Info */}
-                      <div className="text-[10px] text-muted-foreground truncate">
+                      {/* Bottom Footer Info — the weekly view has room for detail */}
+                      <div className="text-[10px] text-muted-foreground space-y-0.5">
                         {viewMode === 'employee' && day.hasSessions && (
-                          <span className="text-[9px] text-muted-foreground flex items-center gap-1 truncate">
-                            {day.signedSessions.length > 0
-                              ? day.signedSessions[0].shift?.code ||
-                                day.signedSessions[0].session.session_name
-                              : day.missedSessions[0]?.shift?.code ||
-                                day.missedSessions[0]?.session.session_name}
-                          </span>
+                          <>
+                            <span className="text-[9px] text-muted-foreground flex items-center gap-1 truncate">
+                              {day.signedSessions.length > 0
+                                ? day.signedSessions[0].shift?.code ||
+                                  day.signedSessions[0].session.session_name
+                                : day.missedSessions[0]?.shift?.code ||
+                                  day.missedSessions[0]?.session.session_name}
+                            </span>
+                            {day.signedSessions.length > 0 && (
+                              <span className="text-[9px] font-mono text-muted-foreground flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5 flex-shrink-0" />
+                                {new Date(
+                                  day.signedSessions[0].record.checked_in_at
+                                ).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            )}
+                            {day.signedSessions.length + day.missedSessions.length >
+                              1 && (
+                              <span className="text-[9px] text-muted-foreground/80">
+                                +
+                                {day.signedSessions.length +
+                                  day.missedSessions.length -
+                                  1}{' '}
+                                more
+                              </span>
+                            )}
+                          </>
                         )}
                         {viewMode === 'shift' && day.shiftSessions.length > 0 && (
                           <span className="text-[9px] text-muted-foreground">
@@ -1331,19 +1413,7 @@ export function AttendanceCalendar({
                   Live Kiosk Dynamic QR
                 </span>
                 <span className="font-semibold font-mono">
-                  {monthlyStats.qrCount || 0} times
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center py-1 border-b">
-                <span className="flex items-center gap-1.5 text-foreground">
-                  <Badge variant="default" className="text-[9px] px-1.5 py-0">
-                    PIN
-                  </Badge>
-                  Manual PIN Code Entry
-                </span>
-                <span className="font-semibold font-mono">
-                  {monthlyStats.pinCount || 0} times
+                  {weeklyStats.qrCount || 0} times
                 </span>
               </div>
 
@@ -1355,7 +1425,7 @@ export function AttendanceCalendar({
                   Offline Cached QR
                 </span>
                 <span className="font-semibold font-mono">
-                  {monthlyStats.offlineQrCount || 0} times
+                  {weeklyStats.offlineQrCount || 0} times
                 </span>
               </div>
             </CardContent>
@@ -1605,7 +1675,6 @@ export function AttendanceCalendar({
 function buildDayDetail(
   date: Date,
   dateKey: string,
-  isCurrentMonth: boolean,
   isToday: boolean,
   isFuture: boolean,
   allSessions: AttendanceSession[],
@@ -1617,11 +1686,12 @@ function buildDayDetail(
   shiftMap: Map<string, Shift>,
   profileMap: Map<string, Profile>
 ): DayAttendanceDetail {
-  // Find all sessions on this day
-  const sessionsOnDay = allSessions.filter((s) => {
-    const sDate = new Date(s.started_at).toISOString().slice(0, 10);
-    return sDate === dateKey;
-  });
+  const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+
+  // Find all sessions on this day (bucketed by local date, matching dateKey)
+  const sessionsOnDay = allSessions.filter(
+    (s) => formatDateKey(new Date(s.started_at)) === dateKey
+  );
 
   if (viewMode === 'employee') {
     // Determine shifts this employee is enrolled in
@@ -1676,9 +1746,9 @@ function buildDayDetail(
     return {
       date,
       dateKey,
-      isCurrentMonth,
       isToday,
       isFuture,
+      isWeekend,
       hasSessions,
       status,
       signedSessions,
@@ -1753,9 +1823,9 @@ function buildDayDetail(
     return {
       date,
       dateKey,
-      isCurrentMonth,
       isToday,
       isFuture,
+      isWeekend,
       hasSessions: relevantShiftSessions.length > 0,
       signedSessions: [],
       missedSessions: [],

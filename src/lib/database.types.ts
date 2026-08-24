@@ -68,6 +68,7 @@ export type Database = {
           level: string; // Shift type / Employment Type
           semester: string; // Location / Work Mode (e.g. HQ Office, Remote)
           lecturer_id: string | null; // Manager / Supervisor ID
+          schedule: Json | null; // Per-weekday hours: { days: [{ day, start, end }] }
           created_at: string;
           updated_at: string;
         };
@@ -79,6 +80,7 @@ export type Database = {
           level: string;
           semester: string;
           lecturer_id?: string | null;
+          schedule?: Json | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -90,6 +92,7 @@ export type Database = {
           level?: string;
           semester?: string;
           lecturer_id?: string | null;
+          schedule?: Json | null;
           created_at?: string;
           updated_at?: string;
         };
